@@ -7,8 +7,8 @@ const _geist = Geist({ subsets: ["latin"] });
 const _geistMono = Geist_Mono({ subsets: ["latin"] });
 
 export const metadata: Metadata = {
-  title: 'BroadTrack Wireframes',
-  description: 'Field Technician Job Management System - MVP Wireframes',
+  title: 'BroadTrack',
+  description: 'Field Technician Job Management System - MVP',
   generator: 'v0.app',
   icons: {
     icon: [
