@@ -1,6 +1,6 @@
-# BroadTrack – CRM for Telco Technicians *(On-going)*
+# BroadTrack – CRM for Telco Technicians _(On-going)_
 
-**GitHub:** [github.com/juvielone/broadtrack](#)  
+**GitHub:** [github.com/juvielone/broadtrack](#)
 
 > **Product Requirements Document** — Version 1.0 | MVP Scope | May 2026
 
@@ -37,12 +37,12 @@ A centralized job and expense tracking system designed for field technicians. Th
 
 ## 3. User Roles & Permissions
 
-| Role | Description | Key Permissions |
-|------|-------------|-----------------|
-| **Admin** | Full system access and user management | All permissions across the system |
+| Role                     | Description                                                       | Key Permissions                                                               |
+| ------------------------ | ----------------------------------------------------------------- | ----------------------------------------------------------------------------- |
+| **Admin**                | Full system access and user management                            | All permissions across the system                                             |
 | **Project Manager (PM)** | Creates jobs, assigns technicians, manages expenses and approvals | Create/assign/close jobs, add expenses, approve reimbursements, view all data |
-| **Technician** | Receives assigned jobs, logs work and expenses | View assigned jobs, log procedure steps, upload expenses, clock in via photo |
-| **Finance** | Views financial data for auditing and reporting | View all expenses, reimbursement statuses, and job costs (read-only) |
+| **Technician**           | Receives assigned jobs, logs work and expenses                    | View assigned jobs, log procedure steps, upload expenses, clock in via photo  |
+| **Finance**              | Views financial data for auditing and reporting                   | View all expenses, reimbursement statuses, and job costs (read-only)          |
 
 ---
 
@@ -139,12 +139,13 @@ A centralized job and expense tracking system designed for field technicians. Th
 
 ## 6. Out of Scope (Post-MVP)
 
-- Finance approval layer for reimbursements *(Finance is read-only in MVP)*
+- Finance approval layer for reimbursements _(Finance is read-only in MVP)_
 - Automated payroll or payment processing
 - Invoicing and billing to clients
 - Mobile app (native iOS/Android) — MVP is web-based
 - Third-party integrations (accounting software, HR systems)
 - Advanced reporting and analytics dashboards
+- Add quick snapshot for tech and auto tag them, easier sorting for asbuilt and reference
 
 ---
 
@@ -159,4 +160,4 @@ A centralized job and expense tracking system designed for field technicians. Th
 
 ---
 
-*End of Document — Subject to revision based on client feedback*
+_End of Document — Subject to revision based on client feedback_
