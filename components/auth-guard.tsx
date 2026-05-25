@@ -6,7 +6,7 @@ import { useAuthStore, getRoleRedirectPath } from '@/lib/auth-store'
 
 interface AuthGuardProps {
   children: React.ReactNode
-  allowedRoles?: ('pm' | 'technician' | 'finance')[]
+  allowedRoles?: ('pm' | 'technician' | 'finance' | 'admin')[]
 }
 
 export function AuthGuard({ children, allowedRoles }: AuthGuardProps) {
@@ -15,7 +15,6 @@ export function AuthGuard({ children, allowedRoles }: AuthGuardProps) {
   const { user, isAuthenticated } = useAuthStore()
 
   useEffect(() => {
-    // Skip if on login page
     if (pathname === '/login') return
 
     if (!isAuthenticated) {
@@ -23,18 +22,15 @@ export function AuthGuard({ children, allowedRoles }: AuthGuardProps) {
       return
     }
 
-    // Check role access if allowedRoles specified
     if (allowedRoles && user && !allowedRoles.includes(user.role)) {
       router.push(getRoleRedirectPath(user.role))
     }
   }, [isAuthenticated, user, router, pathname, allowedRoles])
 
-  // Show nothing while redirecting
   if (!isAuthenticated && pathname !== '/login') {
     return null
   }
 
-  // Block access if wrong role
   if (allowedRoles && user && !allowedRoles.includes(user.role)) {
     return null
   }

@@ -2,8 +2,9 @@
 
 import { useState } from 'react'
 import { useRouter } from 'next/navigation'
-import { authenticateUser } from '@/lib/mockData'
+import { supabase } from '@/lib/supabase'
 import { useAuthStore, getRoleRedirectPath } from '@/lib/auth-store'
+import { type AppUser } from '@/lib/types'
 import { Button } from '@/components/ui/button'
 import { Input } from '@/components/ui/input'
 import { Label } from '@/components/ui/label'
@@ -23,33 +24,32 @@ export default function LoginPage() {
     setError('')
     setIsLoading(true)
 
-    // Simulate network delay
-    await new Promise((resolve) => setTimeout(resolve, 500))
+    const { data, error: authError } = await supabase.auth.signInWithPassword({
+      email,
+      password,
+    })
 
-    const user = authenticateUser(email, password)
-
-    if (user) {
-      login(user)
-      router.push(getRoleRedirectPath(user.role))
-    } else {
+    if (authError || !data.user) {
       setError('Invalid email or password')
       setIsLoading(false)
+      return
     }
-  }
 
-  const quickLogin = async (email: string) => {
-    setEmail(email)
-    setPassword('password123')
-    setError('')
-    setIsLoading(true)
+    const { data: profile, error: profileError } = await supabase
+      .from('users')
+      .select('id, email, name, role, avatar_url')
+      .eq('id', data.user.id)
+      .single()
 
-    await new Promise((resolve) => setTimeout(resolve, 300))
-
-    const user = authenticateUser(email, 'password123')
-    if (user) {
-      login(user)
-      router.push(getRoleRedirectPath(user.role))
+    if (profileError || !profile) {
+      setError('Account not configured. Contact your administrator.')
+      await supabase.auth.signOut()
+      setIsLoading(false)
+      return
     }
+
+    login(profile as AppUser)
+    router.push(getRoleRedirectPath(profile.role))
   }
 
   return (
@@ -99,41 +99,6 @@ export default function LoginPage() {
               {isLoading ? 'Signing in...' : 'Sign In'}
             </Button>
           </form>
-
-          <div className="mt-6 border-t pt-6">
-            <p className="mb-3 text-center text-sm text-muted-foreground">
-              Quick login for demo:
-            </p>
-            <div className="grid gap-2">
-              <Button
-                variant="outline"
-                size="sm"
-                className="justify-start"
-                onClick={() => quickLogin('sarah.pm@broadtrack.com')}
-              >
-                <span className="mr-2 h-2 w-2 rounded-full bg-blue-500" />
-                Project Manager (Sarah)
-              </Button>
-              <Button
-                variant="outline"
-                size="sm"
-                className="justify-start"
-                onClick={() => quickLogin('mike.tech@broadtrack.com')}
-              >
-                <span className="mr-2 h-2 w-2 rounded-full bg-green-500" />
-                Technician (Mike)
-              </Button>
-              <Button
-                variant="outline"
-                size="sm"
-                className="justify-start"
-                onClick={() => quickLogin('lisa.finance@broadtrack.com')}
-              >
-                <span className="mr-2 h-2 w-2 rounded-full bg-purple-500" />
-                Finance (Lisa)
-              </Button>
-            </div>
-          </div>
         </CardContent>
       </Card>
     </div>

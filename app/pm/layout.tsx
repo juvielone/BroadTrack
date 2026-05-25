@@ -4,6 +4,7 @@ import Link from 'next/link'
 import { usePathname, useRouter } from 'next/navigation'
 import { AuthGuard } from '@/components/auth-guard'
 import { useAuthStore } from '@/lib/auth-store'
+import { supabase } from '@/lib/supabase'
 import { cn } from '@/lib/utils'
 import {
   LayoutDashboard,
@@ -28,13 +29,14 @@ export default function PMLayout({ children }: { children: React.ReactNode }) {
   const router = useRouter()
   const { user, logout } = useAuthStore()
 
-  const handleLogout = () => {
+  const handleLogout = async () => {
+    await supabase.auth.signOut()
     logout()
     router.push('/login')
   }
 
   return (
-    <AuthGuard allowedRoles={['pm']}>
+    <AuthGuard allowedRoles={['pm', 'admin']}>
       <div className="flex min-h-screen bg-background">
         {/* Sidebar */}
         <aside className="fixed left-0 top-0 z-40 flex h-screen w-64 flex-col border-r bg-card">

@@ -2,12 +2,12 @@
 
 import { create } from 'zustand'
 import { persist } from 'zustand/middleware'
-import { type User, type UserRole } from '@/lib/mockData'
+import { type AppUser, type UserRole } from '@/lib/types'
 
 interface AuthState {
-  user: User | null
+  user: AppUser | null
   isAuthenticated: boolean
-  login: (user: User) => void
+  login: (user: AppUser) => void
   logout: () => void
 }
 
@@ -16,7 +16,7 @@ export const useAuthStore = create<AuthState>()(
     (set) => ({
       user: null,
       isAuthenticated: false,
-      login: (user: User) => set({ user, isAuthenticated: true }),
+      login: (user: AppUser) => set({ user, isAuthenticated: true }),
       logout: () => set({ user: null, isAuthenticated: false }),
     }),
     {
@@ -28,6 +28,7 @@ export const useAuthStore = create<AuthState>()(
 export function getRoleRedirectPath(role: UserRole): string {
   switch (role) {
     case 'pm':
+    case 'admin':
       return '/pm/dashboard'
     case 'technician':
       return '/technician/projects'

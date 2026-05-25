@@ -1,27 +1,63 @@
 'use client'
 
-import { mockProjects, calculateProjectCompletion } from '@/lib/mockData'
+import { useEffect, useState } from 'react'
+import { supabase } from '@/lib/supabase'
+import { computeHoursFromSessions, computeProjectCompletion } from '@/lib/queries'
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card'
 import {
-  Table,
-  TableBody,
-  TableCell,
-  TableHead,
-  TableHeader,
-  TableRow,
+  Table, TableBody, TableCell, TableHead, TableHeader, TableRow,
 } from '@/components/ui/table'
 import { FileBarChart } from 'lucide-react'
 
+type ProjectRow = {
+  id: string; name: string; customer: string; status: string
+  jobs: {
+    id: string; status: string
+    time_sessions: { start_time: string | null; end_time: string | null; status: string }[]
+    expenses: { amount: number; status: string }[]
+  }[]
+}
+
 export default function FinanceReportsPage() {
+  const [projects, setProjects] = useState<ProjectRow[]>([])
+  const [loading, setLoading] = useState(true)
+
+  useEffect(() => {
+    const load = async () => {
+      const { data } = await supabase
+        .from('projects')
+        .select('id, name, customer, status, jobs(id, status, time_sessions(start_time, end_time, status), expenses(amount, status))')
+        .order('name')
+      setProjects((data as unknown as ProjectRow[]) ?? [])
+      setLoading(false)
+    }
+    load()
+  }, [])
+
+  if (loading) {
+    return (
+      <div className="flex min-h-[400px] items-center justify-center">
+        <div className="h-8 w-8 animate-spin rounded-full border-4 border-primary border-t-transparent" />
+      </div>
+    )
+  }
+
+  const allExpenses = projects.flatMap((p) => p.jobs.flatMap((j) => j.expenses))
+
+  const expenseTotals = {
+    pending: allExpenses.filter((e) => e.status === 'pending').reduce((s, e) => s + e.amount, 0),
+    approved: allExpenses.filter((e) => e.status === 'approved').reduce((s, e) => s + e.amount, 0),
+    rejected: allExpenses.filter((e) => e.status === 'rejected').reduce((s, e) => s + e.amount, 0),
+  }
+  const grandTotal = allExpenses.reduce((s, e) => s + e.amount, 0)
+
   return (
     <div className="space-y-6">
-      {/* Header */}
       <div>
         <h1 className="text-3xl font-bold tracking-tight">Reports</h1>
         <p className="text-muted-foreground">Financial reports and analytics (read-only view)</p>
       </div>
 
-      {/* Summary Cards */}
       <div className="grid gap-4 md:grid-cols-2">
         <Card>
           <CardHeader>
@@ -41,18 +77,10 @@ export default function FinanceReportsPage() {
                 </TableRow>
               </TableHeader>
               <TableBody>
-                {mockProjects.map((project) => {
-                  const completion = calculateProjectCompletion(project)
-                  const totalHours = project.jobs.reduce(
-                    (sum, job) =>
-                      sum + job.hoursTracked.reduce((h, t) => h + t.hours, 0),
-                    0
-                  )
-                  const totalExpenses = project.jobs.reduce(
-                    (sum, job) =>
-                      sum + job.expenses.reduce((e, exp) => e + exp.amount, 0),
-                    0
-                  )
+                {projects.map((project) => {
+                  const completion = computeProjectCompletion(project.jobs)
+                  const totalHours = computeHoursFromSessions(project.jobs.flatMap((j) => j.time_sessions))
+                  const totalExpenses = project.jobs.flatMap((j) => j.expenses).reduce((s, e) => s + e.amount, 0)
                   return (
                     <TableRow key={project.id}>
                       <TableCell className="font-medium">{project.name}</TableCell>
@@ -76,27 +104,18 @@ export default function FinanceReportsPage() {
           </CardHeader>
           <CardContent>
             <div className="space-y-4">
-              {['pending', 'approved', 'rejected'].map((status) => {
-                const expenses = mockProjects.flatMap((p) =>
-                  p.jobs.flatMap((j) => j.expenses.filter((e) => e.status === status))
-                )
-                const total = expenses.reduce((sum, e) => sum + e.amount, 0)
-                const colors = {
-                  pending: 'bg-amber-500',
-                  approved: 'bg-green-500',
-                  rejected: 'bg-red-500',
-                }
+              {(['pending', 'approved', 'rejected'] as const).map((status) => {
+                const total = expenseTotals[status]
+                const pct = grandTotal > 0 ? Math.round((total / grandTotal) * 100) : 0
+                const colors = { pending: 'bg-amber-500', approved: 'bg-green-500', rejected: 'bg-red-500' }
                 return (
                   <div key={status}>
-                    <div className="flex justify-between text-sm mb-1">
+                    <div className="mb-1 flex justify-between text-sm">
                       <span className="capitalize">{status}</span>
                       <span className="font-medium">${total.toFixed(2)}</span>
                     </div>
-                    <div className="h-2 bg-muted rounded-full overflow-hidden">
-                      <div
-                        className={`h-full ${colors[status as keyof typeof colors]}`}
-                        style={{ width: `${Math.min((total / 1000) * 100, 100)}%` }}
-                      />
+                    <div className="h-2 overflow-hidden rounded-full bg-muted">
+                      <div className={`h-full ${colors[status]}`} style={{ width: `${pct}%` }} />
                     </div>
                   </div>
                 )
@@ -106,12 +125,11 @@ export default function FinanceReportsPage() {
         </Card>
       </div>
 
-      {/* Placeholder for more reports */}
       <Card>
         <CardContent className="flex flex-col items-center justify-center py-12 text-center">
-          <FileBarChart className="h-12 w-12 text-muted-foreground mb-4" />
-          <h3 className="font-semibold mb-2">More Reports Coming Soon</h3>
-          <p className="text-sm text-muted-foreground max-w-sm">
+          <FileBarChart className="mb-4 h-12 w-12 text-muted-foreground" />
+          <h3 className="mb-2 font-semibold">More Reports Coming Soon</h3>
+          <p className="max-w-sm text-sm text-muted-foreground">
             Additional financial reports including monthly summaries, technician performance,
             and expense trends will be available here.
           </p>

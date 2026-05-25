@@ -4,6 +4,7 @@ import Link from 'next/link'
 import { usePathname, useRouter } from 'next/navigation'
 import { AuthGuard } from '@/components/auth-guard'
 import { useAuthStore } from '@/lib/auth-store'
+import { supabase } from '@/lib/supabase'
 import { cn } from '@/lib/utils'
 import { FolderKanban, Clock, Receipt, LogOut, Radio, User } from 'lucide-react'
 
@@ -18,7 +19,8 @@ export default function TechnicianLayout({ children }: { children: React.ReactNo
   const router = useRouter()
   const { user, logout } = useAuthStore()
 
-  const handleLogout = () => {
+  const handleLogout = async () => {
+    await supabase.auth.signOut()
     logout()
     router.push('/login')
   }

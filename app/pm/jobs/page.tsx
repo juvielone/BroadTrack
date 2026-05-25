@@ -1,8 +1,9 @@
 'use client'
 
+import { useEffect, useState } from 'react'
 import Link from 'next/link'
-import { useState } from 'react'
-import { mockProjects, calculateJobCompletion } from '@/lib/mockData'
+import { supabase } from '@/lib/supabase'
+import { computeJobCompletion } from '@/lib/queries'
 import { Card, CardContent } from '@/components/ui/card'
 import { Button } from '@/components/ui/button'
 import { Badge } from '@/components/ui/badge'
@@ -25,39 +26,73 @@ import {
 } from '@/components/ui/table'
 import { Search } from 'lucide-react'
 
+type JobRow = {
+  id: string
+  title: string
+  location: string | null
+  status: string
+  priority: string
+  project_id: string
+  procedure_steps: { id: string; completed: boolean }[]
+  projects: { id: string; name: string } | null
+}
+
+type ProjectOption = { id: string; name: string }
+
 export default function AllJobsPage() {
+  const [jobs, setJobs] = useState<JobRow[]>([])
+  const [projectOptions, setProjectOptions] = useState<ProjectOption[]>([])
+  const [loading, setLoading] = useState(true)
   const [search, setSearch] = useState('')
-  const [statusFilter, setStatusFilter] = useState<string>('all')
-  const [projectFilter, setProjectFilter] = useState<string>('all')
+  const [statusFilter, setStatusFilter] = useState('all')
+  const [projectFilter, setProjectFilter] = useState('all')
 
-  const allJobs = mockProjects.flatMap((project) =>
-    project.jobs.map((job) => ({ ...job, projectName: project.name, projectId: project.id }))
-  )
+  useEffect(() => {
+    const load = async () => {
+      const [jobsRes, projectsRes] = await Promise.all([
+        supabase
+          .from('jobs')
+          .select('id, title, location, status, priority, project_id, procedure_steps(id, completed), projects(id, name)')
+          .order('created_at', { ascending: false }),
+        supabase.from('projects').select('id, name').order('name'),
+      ])
+      setJobs((jobsRes.data as unknown as JobRow[]) ?? [])
+      setProjectOptions((projectsRes.data as ProjectOption[]) ?? [])
+      setLoading(false)
+    }
+    load()
+  }, [])
 
-  const filteredJobs = allJobs.filter((job) => {
+  const filtered = jobs.filter((job) => {
     const matchesSearch =
       job.title.toLowerCase().includes(search.toLowerCase()) ||
-      job.projectName.toLowerCase().includes(search.toLowerCase())
+      (job.projects?.name ?? '').toLowerCase().includes(search.toLowerCase())
     const matchesStatus = statusFilter === 'all' || job.status === statusFilter
-    const matchesProject = projectFilter === 'all' || job.projectId === projectFilter
+    const matchesProject = projectFilter === 'all' || job.project_id === projectFilter
     return matchesSearch && matchesStatus && matchesProject
   })
 
-  const statusColors = {
+  const statusColors: Record<string, string> = {
     in_progress: 'bg-blue-500',
     on_hold: 'bg-amber-500',
     completed: 'bg-green-500',
   }
 
+  if (loading) {
+    return (
+      <div className="flex min-h-[400px] items-center justify-center">
+        <div className="h-8 w-8 animate-spin rounded-full border-4 border-primary border-t-transparent" />
+      </div>
+    )
+  }
+
   return (
     <div className="space-y-6">
-      {/* Header */}
       <div>
         <h1 className="text-3xl font-bold tracking-tight">All Jobs</h1>
         <p className="text-muted-foreground">View all jobs across all projects</p>
       </div>
 
-      {/* Filters */}
       <div className="flex flex-wrap gap-4">
         <div className="relative flex-1 min-w-[200px]">
           <Search className="absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-muted-foreground" />
@@ -74,10 +109,8 @@ export default function AllJobsPage() {
           </SelectTrigger>
           <SelectContent>
             <SelectItem value="all">All Projects</SelectItem>
-            {mockProjects.map((project) => (
-              <SelectItem key={project.id} value={project.id}>
-                {project.name}
-              </SelectItem>
+            {projectOptions.map((p) => (
+              <SelectItem key={p.id} value={p.id}>{p.name}</SelectItem>
             ))}
           </SelectContent>
         </Select>
@@ -94,7 +127,6 @@ export default function AllJobsPage() {
         </Select>
       </div>
 
-      {/* Jobs Table */}
       <Card>
         <CardContent className="p-0">
           <Table>
@@ -105,12 +137,12 @@ export default function AllJobsPage() {
                 <TableHead>Status</TableHead>
                 <TableHead>Progress</TableHead>
                 <TableHead>Priority</TableHead>
-                <TableHead></TableHead>
+                <TableHead />
               </TableRow>
             </TableHeader>
             <TableBody>
-              {filteredJobs.map((job) => {
-                const completion = calculateJobCompletion(job)
+              {filtered.map((job) => {
+                const completion = computeJobCompletion(job.procedure_steps)
                 return (
                   <TableRow key={job.id}>
                     <TableCell>
@@ -120,12 +152,14 @@ export default function AllJobsPage() {
                       </div>
                     </TableCell>
                     <TableCell>
-                      <Link
-                        href={`/pm/projects/${job.projectId}`}
-                        className="text-primary hover:underline"
-                      >
-                        {job.projectName}
-                      </Link>
+                      {job.projects && (
+                        <Link
+                          href={`/pm/projects/${job.projects.id}`}
+                          className="text-primary hover:underline"
+                        >
+                          {job.projects.name}
+                        </Link>
+                      )}
                     </TableCell>
                     <TableCell>
                       <div className="flex items-center gap-2">
@@ -154,7 +188,7 @@ export default function AllJobsPage() {
                     </TableCell>
                     <TableCell>
                       <Button variant="ghost" size="sm" asChild>
-                        <Link href={`/pm/projects/${job.projectId}/jobs/${job.id}`}>View</Link>
+                        <Link href={`/pm/projects/${job.project_id}/jobs/${job.id}`}>View</Link>
                       </Button>
                     </TableCell>
                   </TableRow>
@@ -165,7 +199,7 @@ export default function AllJobsPage() {
         </CardContent>
       </Card>
 
-      {filteredJobs.length === 0 && (
+      {filtered.length === 0 && (
         <div className="py-12 text-center text-muted-foreground">
           No jobs found matching your criteria
         </div>
