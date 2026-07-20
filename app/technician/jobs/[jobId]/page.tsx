@@ -4,18 +4,21 @@ import { use, useEffect, useState } from 'react'
 import Link from 'next/link'
 import { notFound } from 'next/navigation'
 import { supabase } from '@/lib/supabase'
+import { useAuthStore } from '@/lib/auth-store'
+import { updateStepCompletion } from '@/lib/step-completion'
 import { computeJobCompletion, computeHoursFromSessions } from '@/lib/queries'
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card'
 import { Button } from '@/components/ui/button'
 import { Badge } from '@/components/ui/badge'
 import { Progress } from '@/components/ui/progress'
 import { Checkbox } from '@/components/ui/checkbox'
-import { ArrowLeft, MapPin, Clock, Plus, Camera, CheckCircle2 } from 'lucide-react'
+import { ArrowLeft, MapPin, Clock, Plus, Camera, Image as ImageIcon } from 'lucide-react'
 
 type SubStep = { id: string; title: string; completed: boolean }
 type Step = {
   id: string; title: string; description: string | null
   completed: boolean; completed_at: string | null; sub_steps: SubStep[]
+  step_photos: { url: string }[] | { url: string } | null
 }
 type Session = { id: string; start_time: string | null; end_time: string | null; status: string }
 type Job = {
@@ -26,8 +29,11 @@ type Job = {
 
 export default function TechnicianJobDetailPage({ params }: { params: Promise<{ jobId: string }> }) {
   const { jobId } = use(params)
+  const { user } = useAuthStore()
   const [job, setJob] = useState<Job | null>(null)
   const [loading, setLoading] = useState(true)
+  const [togglingStepId, setTogglingStepId] = useState<string | null>(null)
+  const [stepError, setStepError] = useState<string | null>(null)
 
   useEffect(() => {
     const load = async () => {
@@ -35,7 +41,7 @@ export default function TechnicianJobDetailPage({ params }: { params: Promise<{ 
         .from('jobs')
         .select(`
           id, title, description, location, status,
-          procedure_steps(id, title, description, completed, completed_at, sub_steps(id, title, completed)),
+          procedure_steps(id, title, description, completed, completed_at, sub_steps(id, title, completed), step_photos(url)),
           time_sessions(id, start_time, end_time, status),
           project:projects!project_id(id, name)
         `)
@@ -47,6 +53,34 @@ export default function TechnicianJobDetailPage({ params }: { params: Promise<{ 
     }
     load()
   }, [jobId])
+
+  const handleToggleStep = async (stepId: string, checked: boolean) => {
+    if (!user) return
+    setTogglingStepId(stepId)
+    setStepError(null)
+
+    const { error } = await updateStepCompletion(stepId, checked, user.id)
+
+    if (error) {
+      setStepError('Failed to update step. Please try again.')
+      setTogglingStepId(null)
+      return
+    }
+
+    setJob((prev) =>
+      prev
+        ? {
+            ...prev,
+            procedure_steps: prev.procedure_steps.map((s) =>
+              s.id === stepId
+                ? { ...s, completed: checked, completed_at: checked ? new Date().toISOString() : null }
+                : s
+            ),
+          }
+        : prev
+    )
+    setTogglingStepId(null)
+  }
 
   if (loading) {
     return (
@@ -88,6 +122,10 @@ export default function TechnicianJobDetailPage({ params }: { params: Promise<{ 
         </Badge>
       </div>
 
+      {stepError && (
+        <div className="rounded-lg border border-red-200 bg-red-50 p-3 text-sm text-red-600">{stepError}</div>
+      )}
+
       <div className="flex flex-wrap gap-4 text-sm">
         <div className="flex items-center gap-1.5 text-muted-foreground">
           <MapPin className="h-4 w-4" />{job.location}
@@ -126,36 +164,51 @@ export default function TechnicianJobDetailPage({ params }: { params: Promise<{ 
       <Card>
         <CardHeader className="pb-2"><CardTitle className="text-base">Procedure Steps</CardTitle></CardHeader>
         <CardContent className="space-y-3">
-          {job.procedure_steps.map((step, index) => (
-            <div key={step.id} className={`rounded-lg border p-3 ${step.completed ? 'bg-green-500/5 border-green-500/20' : ''}`}>
-              <div className="flex items-start gap-3">
-                {step.completed
-                  ? <CheckCircle2 className="mt-0.5 h-5 w-5 text-green-500" />
-                  : <Checkbox disabled className="mt-0.5" />
-                }
-                <div className="flex-1">
-                  <div className="flex items-center gap-2">
-                    <span className="text-xs font-medium text-muted-foreground">Step {index + 1}</span>
-                    <span className="font-medium">{step.title}</span>
-                  </div>
-                  <p className="mt-0.5 text-sm text-muted-foreground">{step.description}</p>
-                  <div className="mt-2 space-y-1">
-                    {step.sub_steps.map((ss) => (
-                      <div key={ss.id} className="flex items-center gap-2 text-sm">
-                        <Checkbox checked={ss.completed} disabled className="h-3.5 w-3.5" />
-                        <span className={ss.completed ? 'text-muted-foreground line-through' : ''}>{ss.title}</span>
+          {job.procedure_steps.map((step, index) => {
+            const hasPhoto = Array.isArray(step.step_photos)
+              ? step.step_photos.length > 0
+              : !!step.step_photos
+
+            return (
+              <div key={step.id} className={`rounded-lg border p-3 ${step.completed ? 'bg-green-500/5 border-green-500/20' : ''}`}>
+                <div className="flex items-start gap-3">
+                  <Checkbox
+                    checked={step.completed}
+                    disabled={togglingStepId === step.id}
+                    onCheckedChange={(v) => handleToggleStep(step.id, v as boolean)}
+                    className="mt-0.5"
+                  />
+                  <div className="flex-1">
+                    <div className="flex items-center gap-2">
+                      <span className="text-xs font-medium text-muted-foreground">Step {index + 1}</span>
+                      <span className="font-medium">{step.title}</span>
+                    </div>
+                    <p className="mt-0.5 text-sm text-muted-foreground">{step.description}</p>
+                    <div className="mt-2 space-y-1">
+                      {step.sub_steps.map((ss) => (
+                        <div key={ss.id} className="flex items-center gap-2 text-sm">
+                          <Checkbox checked={ss.completed} disabled className="h-3.5 w-3.5" />
+                          <span className={ss.completed ? 'text-muted-foreground line-through' : ''}>{ss.title}</span>
+                        </div>
+                      ))}
+                    </div>
+                    {(hasPhoto || (step.completed && step.completed_at)) && (
+                      <div className="mt-2 flex items-center gap-3 text-xs text-muted-foreground">
+                        {hasPhoto && (
+                          <span className="flex items-center gap-1">
+                            <ImageIcon className="h-3 w-3" />Photo attached
+                          </span>
+                        )}
+                        {step.completed && step.completed_at && (
+                          <span>Completed {new Date(step.completed_at).toLocaleDateString()}</span>
+                        )}
                       </div>
-                    ))}
+                    )}
                   </div>
-                  {step.completed && step.completed_at && (
-                    <p className="mt-2 text-xs text-muted-foreground">
-                      Completed {new Date(step.completed_at).toLocaleDateString()}
-                    </p>
-                  )}
                 </div>
               </div>
-            </div>
-          ))}
+            )
+          })}
         </CardContent>
       </Card>
 

@@ -61,6 +61,13 @@ export interface SubStep {
   sort_order: number
 }
 
+export interface StepPhoto {
+  id: string
+  step_id: string
+  url: string
+  created_at: string
+}
+
 export interface Expense {
   id: string
   job_id: string

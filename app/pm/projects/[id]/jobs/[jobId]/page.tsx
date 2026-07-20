@@ -5,6 +5,7 @@ import Link from 'next/link'
 import { notFound } from 'next/navigation'
 import { supabase } from '@/lib/supabase'
 import { useAuthStore } from '@/lib/auth-store'
+import { updateStepCompletion } from '@/lib/step-completion'
 import { computeJobCompletion, computeHoursFromSessions } from '@/lib/queries'
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card'
 import { Button } from '@/components/ui/button'
@@ -23,8 +24,9 @@ import { ArrowLeft, MapPin, Clock, DollarSign, ChevronRight, Image as ImageIcon,
 type SubStep = { id: string; title: string; completed: boolean }
 type Step = {
   id: string; title: string; description: string | null; completed: boolean
-  completed_at: string | null; photo_url: string | null; sub_steps: SubStep[]
+  completed_at: string | null; sub_steps: SubStep[]
   completed_by_user: { name: string } | null
+  step_photos: { url: string }[] | { url: string } | null
 }
 type Expense = {
   id: string; description: string; amount: number; status: string
@@ -49,6 +51,8 @@ export default function JobDetailPage({ params }: { params: Promise<{ id: string
   const [holdDialogOpen, setHoldDialogOpen] = useState(false)
   const [holdReason, setHoldReason] = useState('')
   const [saving, setSaving] = useState(false)
+  const [togglingStepId, setTogglingStepId] = useState<string | null>(null)
+  const [stepError, setStepError] = useState<string | null>(null)
 
   const load = async () => {
     const [jobRes, projectRes] = await Promise.all([
@@ -56,7 +60,7 @@ export default function JobDetailPage({ params }: { params: Promise<{ id: string
         .from('jobs')
         .select(`
           id, title, description, location, status, priority, on_hold_reason,
-          procedure_steps(id, title, description, completed, completed_at, photo_url, sub_steps(id, title, completed), completed_by_user:users!completed_by(name)),
+          procedure_steps(id, title, description, completed, completed_at, sub_steps(id, title, completed), completed_by_user:users!completed_by(name), step_photos(url)),
           expenses(id, description, amount, status, submitted_at, submitter:users!submitted_by(name)),
           time_sessions(id, start_time, end_time, status, technician:users!technician_id(name)),
           job_assignments(user_id, user:users!user_id(id, name, email))
@@ -89,6 +93,39 @@ export default function JobDetailPage({ params }: { params: Promise<{ id: string
     await updateStatus('on_hold', { on_hold_reason: holdReason.trim() })
     setHoldDialogOpen(false)
     setHoldReason('')
+  }
+
+  const handleToggleStep = async (stepId: string, checked: boolean) => {
+    if (!user) return
+    setTogglingStepId(stepId)
+    setStepError(null)
+
+    const { error } = await updateStepCompletion(stepId, checked, user.id)
+
+    if (error) {
+      setStepError('Failed to update step. Please try again.')
+      setTogglingStepId(null)
+      return
+    }
+
+    setJob((prev) =>
+      prev
+        ? {
+            ...prev,
+            procedure_steps: prev.procedure_steps.map((s) =>
+              s.id === stepId
+                ? {
+                    ...s,
+                    completed: checked,
+                    completed_at: checked ? new Date().toISOString() : null,
+                    completed_by_user: checked ? { name: user.name } : null,
+                  }
+                : s
+            ),
+          }
+        : prev
+    )
+    setTogglingStepId(null)
   }
 
   if (loading) {
@@ -172,6 +209,10 @@ export default function JobDetailPage({ params }: { params: Promise<{ id: string
         </div>
       </div>
 
+      {stepError && (
+        <div className="rounded-lg border border-red-200 bg-red-50 p-3 text-sm text-red-600">{stepError}</div>
+      )}
+
       {/* Quick Info */}
       <div className="flex flex-wrap gap-6 text-sm">
         <div className="flex items-center gap-2 text-muted-foreground">
@@ -202,38 +243,51 @@ export default function JobDetailPage({ params }: { params: Promise<{ id: string
               <Progress value={completion} className="h-2" />
             </CardHeader>
             <CardContent className="space-y-4">
-              {job.procedure_steps.map((step, index) => (
-                <div key={step.id} className={`rounded-lg border p-4 ${step.completed ? 'bg-muted/50' : ''}`}>
-                  <div className="flex items-start gap-3">
-                    <Checkbox checked={step.completed} disabled className="mt-1" />
-                    <div className="flex-1">
-                      <div className="flex items-center gap-2">
-                        <span className="text-sm font-medium text-muted-foreground">Step {index + 1}</span>
-                        <h4 className="font-medium">{step.title}</h4>
-                      </div>
-                      <p className="mt-1 text-sm text-muted-foreground">{step.description}</p>
-                      <div className="mt-3 space-y-2">
-                        {step.sub_steps.map((ss) => (
-                          <div key={ss.id} className="flex items-center gap-2 text-sm">
-                            <Checkbox checked={ss.completed} disabled className="h-3.5 w-3.5" />
-                            <span className={ss.completed ? 'text-muted-foreground line-through' : ''}>{ss.title}</span>
-                          </div>
-                        ))}
-                      </div>
-                      {step.completed && step.completed_at && (
-                        <div className="mt-3 flex items-center gap-4 text-xs text-muted-foreground">
-                          {step.photo_url && (
-                            <span className="flex items-center gap-1">
-                              <ImageIcon className="h-3 w-3" />Photo attached
-                            </span>
-                          )}
-                          <span>Completed {new Date(step.completed_at).toLocaleDateString()}</span>
+              {job.procedure_steps.map((step, index) => {
+                const hasPhoto = Array.isArray(step.step_photos)
+                  ? step.step_photos.length > 0
+                  : !!step.step_photos
+
+                return (
+                  <div key={step.id} className={`rounded-lg border p-4 ${step.completed ? 'bg-muted/50' : ''}`}>
+                    <div className="flex items-start gap-3">
+                      <Checkbox
+                        checked={step.completed}
+                        disabled={togglingStepId === step.id}
+                        onCheckedChange={(v) => handleToggleStep(step.id, v as boolean)}
+                        className="mt-1"
+                      />
+                      <div className="flex-1">
+                        <div className="flex items-center gap-2">
+                          <span className="text-sm font-medium text-muted-foreground">Step {index + 1}</span>
+                          <h4 className="font-medium">{step.title}</h4>
                         </div>
-                      )}
+                        <p className="mt-1 text-sm text-muted-foreground">{step.description}</p>
+                        <div className="mt-3 space-y-2">
+                          {step.sub_steps.map((ss) => (
+                            <div key={ss.id} className="flex items-center gap-2 text-sm">
+                              <Checkbox checked={ss.completed} disabled className="h-3.5 w-3.5" />
+                              <span className={ss.completed ? 'text-muted-foreground line-through' : ''}>{ss.title}</span>
+                            </div>
+                          ))}
+                        </div>
+                        {(hasPhoto || (step.completed && step.completed_at)) && (
+                          <div className="mt-3 flex items-center gap-4 text-xs text-muted-foreground">
+                            {hasPhoto && (
+                              <span className="flex items-center gap-1">
+                                <ImageIcon className="h-3 w-3" />Photo attached
+                              </span>
+                            )}
+                            {step.completed && step.completed_at && (
+                              <span>Completed {new Date(step.completed_at).toLocaleDateString()}</span>
+                            )}
+                          </div>
+                        )}
+                      </div>
                     </div>
                   </div>
-                </div>
-              ))}
+                )
+              })}
             </CardContent>
           </Card>
 

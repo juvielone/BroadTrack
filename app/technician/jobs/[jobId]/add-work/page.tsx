@@ -6,6 +6,7 @@ import { useRouter } from 'next/navigation'
 import { notFound } from 'next/navigation'
 import { supabase } from '@/lib/supabase'
 import { useAuthStore } from '@/lib/auth-store'
+import { updateStepCompletion } from '@/lib/step-completion'
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card'
 import { Button } from '@/components/ui/button'
 import { Checkbox } from '@/components/ui/checkbox'
@@ -14,9 +15,12 @@ import {
 } from '@/components/ui/select'
 import { ArrowLeft, Camera, Upload, X } from 'lucide-react'
 
+const ALLOWED_TYPES = new Set(['image/jpeg', 'image/png', 'image/heic', 'image/heif'])
+const MAX_SIZE_BYTES = 15 * 1024 * 1024
+
 type SubStep = { id: string; title: string; completed: boolean }
 type Step = { id: string; title: string; description: string | null; completed: boolean; sub_steps: SubStep[] }
-type Job = { id: string; title: string; procedure_steps: Step[] }
+type Job = { id: string; title: string; project_id: string; procedure_steps: Step[] }
 
 export default function AddWorkPage({ params }: { params: Promise<{ jobId: string }> }) {
   const { jobId } = use(params)
@@ -26,18 +30,21 @@ export default function AddWorkPage({ params }: { params: Promise<{ jobId: strin
   const [job, setJob] = useState<Job | null>(null)
   const [loading, setLoading] = useState(true)
   const [selectedStep, setSelectedStep] = useState('')
-  const [markComplete, setMarkComplete] = useState(false)
   const [photoFile, setPhotoFile] = useState<File | null>(null)
   const [photoPreview, setPhotoPreview] = useState<string | null>(null)
   const [isSubmitting, setIsSubmitting] = useState(false)
   const [error, setError] = useState<string | null>(null)
+  const [success, setSuccess] = useState(false)
+  const [isMarkingComplete, setIsMarkingComplete] = useState(false)
+  const [completeError, setCompleteError] = useState<string | null>(null)
+  const [completeSuccess, setCompleteSuccess] = useState(false)
   const fileInputRef = useRef<HTMLInputElement>(null)
 
   useEffect(() => {
     const load = async () => {
       const { data } = await supabase
         .from('jobs')
-        .select('id, title, procedure_steps(id, title, description, completed, sub_steps(id, title, completed))')
+        .select('id, title, project_id, procedure_steps(id, title, description, completed, sub_steps(id, title, completed))')
         .eq('id', jobId)
         .single()
       if (!data) { notFound(); return }
@@ -50,6 +57,19 @@ export default function AddWorkPage({ params }: { params: Promise<{ jobId: strin
   const handleFileChange = (e: React.ChangeEvent<HTMLInputElement>) => {
     const file = e.target.files?.[0]
     if (!file) return
+
+    if (!ALLOWED_TYPES.has(file.type)) {
+      setError('Unsupported file type. Please use JPEG, PNG, HEIC, or HEIF.')
+      if (fileInputRef.current) fileInputRef.current.value = ''
+      return
+    }
+    if (file.size > MAX_SIZE_BYTES) {
+      setError('File exceeds the 15MB limit.')
+      if (fileInputRef.current) fileInputRef.current.value = ''
+      return
+    }
+
+    setError(null)
     setPhotoFile(file)
     setPhotoPreview(URL.createObjectURL(file))
   }
@@ -66,12 +86,13 @@ export default function AddWorkPage({ params }: { params: Promise<{ jobId: strin
     if (!job || !photoFile || !selectedStep || !user) return
     setIsSubmitting(true)
     setError(null)
+    setSuccess(false)
 
     const ext = photoFile.name.split('.').pop() ?? 'jpg'
-    const path = `${jobId}/${selectedStep}/${Date.now()}.${ext}`
+    const stagingPath = `staging/${jobId}/${selectedStep}/${Date.now()}.${ext}`
     const { error: uploadError } = await supabase.storage
       .from('job-photos')
-      .upload(path, photoFile, { contentType: photoFile.type })
+      .upload(stagingPath, photoFile, { contentType: photoFile.type })
 
     if (uploadError) {
       setError('Photo upload failed. Please try again.')
@@ -79,17 +100,57 @@ export default function AddWorkPage({ params }: { params: Promise<{ jobId: strin
       return
     }
 
-    const { data: { publicUrl } } = supabase.storage.from('job-photos').getPublicUrl(path)
+    const res = await fetch('/api/step-photos', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        stagingPath,
+        projectId: job.project_id,
+        jobId,
+        stepId: selectedStep,
+      }),
+    })
 
-    const update: Record<string, unknown> = { photo_url: publicUrl }
-    if (markComplete) {
-      update.completed = true
-      update.completed_at = new Date().toISOString()
-      update.completed_by = user.id
+    if (!res.ok) {
+      const body = await res.json().catch(() => null)
+      setError(body?.error ?? 'Photo upload failed. Please try again.')
+      setIsSubmitting(false)
+      return
     }
 
-    await supabase.from('procedure_steps').update(update).eq('id', selectedStep)
-    router.push(`/technician/jobs/${job.id}`)
+    setSuccess(true)
+    setTimeout(() => {
+      router.push(`/technician/jobs/${job.id}`)
+    }, 1500)
+  }
+
+  const handleMarkComplete = async () => {
+    if (!selectedStep || !user) return
+    setIsMarkingComplete(true)
+    setCompleteError(null)
+    setCompleteSuccess(false)
+
+    const { error: updateError } = await updateStepCompletion(selectedStep, true, user.id)
+
+    if (updateError) {
+      setCompleteError('Failed to mark step complete. Please try again.')
+      setIsMarkingComplete(false)
+      return
+    }
+
+    setJob((prev) =>
+      prev
+        ? {
+            ...prev,
+            procedure_steps: prev.procedure_steps.map((s) =>
+              s.id === selectedStep ? { ...s, completed: true } : s
+            ),
+          }
+        : prev
+    )
+    setSelectedStep('')
+    setCompleteSuccess(true)
+    setIsMarkingComplete(false)
   }
 
   if (loading) {
@@ -121,10 +182,26 @@ export default function AddWorkPage({ params }: { params: Promise<{ jobId: strin
         <div className="rounded-lg border border-red-200 bg-red-50 p-3 text-sm text-red-600">{error}</div>
       )}
 
+      {success && (
+        <div className="rounded-lg border border-green-200 bg-green-50 p-3 text-sm text-green-700">
+          Photo uploaded successfully.
+        </div>
+      )}
+
+      {completeError && (
+        <div className="rounded-lg border border-red-200 bg-red-50 p-3 text-sm text-red-600">{completeError}</div>
+      )}
+
+      {completeSuccess && (
+        <div className="rounded-lg border border-green-200 bg-green-50 p-3 text-sm text-green-700">
+          Step marked complete.
+        </div>
+      )}
+
       <input
         ref={fileInputRef}
         type="file"
-        accept="image/*"
+        accept="image/jpeg,image/png,image/heic,image/heif"
         className="hidden"
         onChange={handleFileChange}
       />
@@ -133,7 +210,14 @@ export default function AddWorkPage({ params }: { params: Promise<{ jobId: strin
         <Card>
           <CardHeader className="pb-2"><CardTitle className="text-base">Procedure Step</CardTitle></CardHeader>
           <CardContent>
-            <Select value={selectedStep} onValueChange={setSelectedStep}>
+            <Select
+              value={selectedStep}
+              onValueChange={(v) => {
+                setSelectedStep(v)
+                setCompleteError(null)
+                setCompleteSuccess(false)
+              }}
+            >
               <SelectTrigger>
                 <SelectValue placeholder="Select the step you worked on..." />
               </SelectTrigger>
@@ -227,17 +311,22 @@ export default function AddWorkPage({ params }: { params: Promise<{ jobId: strin
         {selectedStep && (
           <Card>
             <CardContent className="p-4">
-              <label className="flex cursor-pointer items-start gap-3">
-                <Checkbox
-                  checked={markComplete}
-                  onCheckedChange={(v) => setMarkComplete(v as boolean)}
-                  className="mt-0.5"
-                />
+              <div className="flex items-center justify-between gap-3">
                 <div>
                   <p className="font-medium">Mark step as complete</p>
-                  <p className="text-sm text-muted-foreground">Check this if all sub-steps are finished</p>
+                  <p className="text-sm text-muted-foreground">
+                    Independent of the photo above — finishes this step for the job.
+                  </p>
                 </div>
-              </label>
+                <Button
+                  type="button"
+                  variant="outline"
+                  onClick={handleMarkComplete}
+                  disabled={isMarkingComplete}
+                >
+                  {isMarkingComplete ? 'Marking...' : 'Mark Complete'}
+                </Button>
+              </div>
             </CardContent>
           </Card>
         )}
@@ -247,7 +336,7 @@ export default function AddWorkPage({ params }: { params: Promise<{ jobId: strin
             <Link href={`/technician/jobs/${job.id}`}>Cancel</Link>
           </Button>
           <Button type="submit" className="flex-1" disabled={!photoFile || !selectedStep || isSubmitting}>
-            {isSubmitting ? 'Saving...' : 'Save Work'}
+            {success ? 'Saved' : isSubmitting ? 'Saving...' : 'Save Work'}
           </Button>
         </div>
       </form>
