@@ -5,6 +5,7 @@ import convert from 'heic-convert'
 
 const ALLOWED_TYPES = new Set(['image/jpeg', 'image/png', 'image/heic', 'image/heif'])
 const MAX_SIZE_BYTES = 15 * 1024 * 1024
+const MAX_PHOTOS_PER_STEP = 5
 const HEIC_TYPES = new Set(['image/heic', 'image/heif'])
 const BUCKET = 'job-photos'
 
@@ -67,6 +68,21 @@ export async function POST(request: Request) {
 
   if (stagingPath !== `staging/${jobId}/${stepId}/${stagingPath.split('/').pop()}`) {
     return NextResponse.json({ error: 'stagingPath does not match jobId/stepId' }, { status: 400 })
+  }
+
+  const { count, error: countError } = await supabase
+    .from('step_photos')
+    .select('id', { count: 'exact', head: true })
+    .eq('step_id', stepId)
+
+  if (countError) {
+    await deleteStagingObject(supabase, stagingPath)
+    return NextResponse.json({ error: 'Failed to check existing photos' }, { status: 500 })
+  }
+
+  if ((count ?? 0) >= MAX_PHOTOS_PER_STEP) {
+    await deleteStagingObject(supabase, stagingPath)
+    return NextResponse.json({ error: 'Maximum 5 photos per step reached' }, { status: 400 })
   }
 
   const { data: blob, error: downloadError } = await supabase.storage.from(BUCKET).download(stagingPath)
