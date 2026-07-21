@@ -17,6 +17,28 @@ import { ArrowLeft, Camera, Upload, X } from 'lucide-react'
 
 const ALLOWED_TYPES = new Set(['image/jpeg', 'image/png', 'image/heic', 'image/heif'])
 const MAX_SIZE_BYTES = 15 * 1024 * 1024
+const EXTENSION_TO_MIME: Record<string, string> = {
+  jpg: 'image/jpeg',
+  jpeg: 'image/jpeg',
+  png: 'image/png',
+  heic: 'image/heic',
+  heif: 'image/heif',
+}
+
+// Some browser/OS combinations (notably Windows without HEIF codecs installed)
+// report an empty or generic File.type for HEIC/HEIF files instead of a real
+// MIME type. Fall back to the filename extension only for those "I don't
+// actually know" signals — never override a type the browser confidently
+// reported as something specific and different (including other image
+// formats we don't support), since that's a real answer, not a gap.
+const UNKNOWN_TYPES = new Set(['', 'application/octet-stream'])
+
+function resolveFileType(file: File): string | null {
+  if (ALLOWED_TYPES.has(file.type)) return file.type
+  if (!UNKNOWN_TYPES.has(file.type)) return null
+  const ext = file.name.split('.').pop()?.toLowerCase()
+  return ext ? EXTENSION_TO_MIME[ext] ?? null : null
+}
 
 type SubStep = { id: string; title: string; completed: boolean }
 type Step = { id: string; title: string; description: string | null; completed: boolean; sub_steps: SubStep[] }
@@ -31,6 +53,7 @@ export default function AddWorkPage({ params }: { params: Promise<{ jobId: strin
   const [loading, setLoading] = useState(true)
   const [selectedStep, setSelectedStep] = useState('')
   const [photoFile, setPhotoFile] = useState<File | null>(null)
+  const [photoType, setPhotoType] = useState<string | null>(null)
   const [photoPreview, setPhotoPreview] = useState<string | null>(null)
   const [isSubmitting, setIsSubmitting] = useState(false)
   const [error, setError] = useState<string | null>(null)
@@ -58,7 +81,8 @@ export default function AddWorkPage({ params }: { params: Promise<{ jobId: strin
     const file = e.target.files?.[0]
     if (!file) return
 
-    if (!ALLOWED_TYPES.has(file.type)) {
+    const resolvedType = resolveFileType(file)
+    if (!resolvedType) {
       setError('Unsupported file type. Please use JPEG, PNG, HEIC, or HEIF.')
       if (fileInputRef.current) fileInputRef.current.value = ''
       return
@@ -71,28 +95,35 @@ export default function AddWorkPage({ params }: { params: Promise<{ jobId: strin
 
     setError(null)
     setPhotoFile(file)
+    setPhotoType(resolvedType)
     setPhotoPreview(URL.createObjectURL(file))
   }
 
   const clearPhoto = () => {
     if (photoPreview) URL.revokeObjectURL(photoPreview)
     setPhotoFile(null)
+    setPhotoType(null)
     setPhotoPreview(null)
     if (fileInputRef.current) fileInputRef.current.value = ''
   }
 
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault()
-    if (!job || !photoFile || !selectedStep || !user) return
+    if (!job || !photoFile || !photoType || !selectedStep || !user) return
     setIsSubmitting(true)
     setError(null)
     setSuccess(false)
 
     const ext = photoFile.name.split('.').pop() ?? 'jpg'
     const stagingPath = `staging/${jobId}/${selectedStep}/${Date.now()}.${ext}`
+    // storage-js wraps Blob/File bodies in FormData and ignores the `contentType`
+    // fileOption in that path — the browser derives the part's Content-Type from
+    // the Blob's own .type instead. Construct a corrected File so its intrinsic
+    // type is what actually reaches Storage.
+    const correctedFile = new File([photoFile], photoFile.name, { type: photoType })
     const { error: uploadError } = await supabase.storage
       .from('job-photos')
-      .upload(stagingPath, photoFile, { contentType: photoFile.type })
+      .upload(stagingPath, correctedFile, { contentType: photoType })
 
     if (uploadError) {
       setError('Photo upload failed. Please try again.')
@@ -335,7 +366,7 @@ export default function AddWorkPage({ params }: { params: Promise<{ jobId: strin
           <Button type="button" variant="outline" className="flex-1" asChild>
             <Link href={`/technician/jobs/${job.id}`}>Cancel</Link>
           </Button>
-          <Button type="submit" className="flex-1" disabled={!photoFile || !selectedStep || isSubmitting}>
+          <Button type="submit" className="flex-1" disabled={!photoFile || !photoType || !selectedStep || isSubmitting}>
             {success ? 'Saved' : isSubmitting ? 'Saving...' : 'Save Work'}
           </Button>
         </div>
